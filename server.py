@@ -1,192 +1,98 @@
-import tkinter as tk
+# Server script for a multi-threaded chat application, using sockets.
+
+# Server.py
+# Necessary library imports.
 import socket
-import threading
+from threading import Thread
 
 
-win = tk.Tk()
-win.title("Server Management Interface")
-
-
-# Design all frames:
-# - Top Frame: includes the Start and Stop buttons for quick server actions.
-# - Middle Frame: includes the Host and Port values of the server.
-# - Client List Frame: includes the clients list.
-
-
-###### TOP FRAME START ######
-topFrame = tk.Frame(win)
-
-startBtn = tk.Button(topFrame, text='Start Server', command=lambda : start_server())
-startBtn.pack(side=tk.LEFT)
-
-stopBtn = tk.Button(topFrame, text='Stop', command=lambda : stop_server(), state=tk.DISABLED)
-stopBtn.pack(side=tk.LEFT)
-
-topFrame.pack(side=tk.TOP, pady=(5, 0))
-###### TOP FRAME END ######
-
-
-###### MIDDLE FRAME START ######
-middleFrame = tk.Frame(win)
-
-hostLbl = tk.Label(middleFrame, text='Host: X.X.X.X')
-hostLbl.pack(side=tk.LEFT)
-
-portLbl = tk.Label(middleFrame, text='Port: XXXX')
-portLbl.pack(side=tk.LEFT)
-
-middleFrame.pack(side=tk.TOP, pady=(5, 0))
-###### MIDDLE FRAME END ######
-
-
-
-###### CLIENT LIST FRAME START ######
-clientListFrame = tk.Frame(win)
-
-lineLbl = tk.Label(clientListFrame, text='          CLIENT LIST          ').pack()
-
-scrollbar = tk.Scrollbar(clientListFrame)
-scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-listDisp = tk.Text(clientListFrame, height=15, width=40)
-listDisp.pack(side=tk.LEFT, fill=tk.Y, padx=(5, 0))
-
-# TEST USERS
-listDisp.insert(tk.END, "User 1\n")
-listDisp.insert(tk.END, "User 1\n")
-listDisp.insert(tk.END, "User 1\n")
-
-scrollbar.config(command=listDisp.yview)
-
-listDisp.config(
-	yscrollcommand=scrollbar.set,
-	background='#F4F6F7',
-	highlightbackground='grey',
-	state='disabled'
-)
-
-clientListFrame.pack(side=tk.BOTTOM, pady=(5, 10))
-###### CLIENT LIST FRAME END ######
-
+# Client and IP dicts.
+clients = {}
+ip_addrs = {}
 
 
 ###### SERVER DATA ######
 
-# Server variables
-HOST_ADDR = '127.0.0.1'
-HOST_PORT = 4444
-BUFSIZE = 4096
+# Constants
+SV_HOST = '127.0.0.1'
+SV_PORT = 33000
+BUFSIZ = 4096
 
-# Clients and nicknames list
-nick = ' '
-clients = []
-nicks = []
-
+# Server
+sv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sv.bind((SV_HOST, SV_PORT))
 
 
-###### SERVER FUNCTIONS ######
 
-# Start server function
-# The code works without the global declaration as well.
-def start_server():
-	global sv, HOST_ADDR, HOST_PORT
+###### SERVER FUNCTIONALITY ######
 
-	# UI
-	startBtn.config(state=tk.DISABLED)
-	stopBtn.config(state=tk.NORMAL)
+# Function that accepts new connections to the server.
+def accept_connections():
+	while True:
+		client, addr = sv.accept()
 
-	# Network
-	sv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-	sv.bind((HOST_ADDR, HOST_PORT))
+		print(f"New connection from {addr}!")
+
+		client.send(
+			"Welcome to Saint's Chatroom! He also goes by the name of dsnk! Please type your nickname and press Enter!".encode('utf-8')
+		)
+
+		ip_addrs[client] = addr
+
+		Thread(target=handle_client, args=(client,)).start()
+
+
+# Function used to handle client messages and connection.
+def handle_client(client):
+	# First receives the client's name in response to the previous server message.
+	name = client.recv(BUFSIZ).decode('utf-8')
+
+	# Send a message about how to properly disconnect from the server.
+	greet_msg = f"Nice to meet you {name}! If you ever want to quit the chatroom, type '[quit]'.".encode('utf-8')
+	client.send(greet_msg)
+
+	# Broadcast a message informing people that a new person joined the chat.
+	broadcast(f"{name} has joined the chat! Everybody give him a warm welcome!".encode('utf-8'))
+
+	clients[client] = name
+
+
+	# Start of main communication loop. First it stores the message received from the client inside the 'msg' variable,
+	# Then it checks if the msg is '[quit]', if true it closes the socket connection to that client and then echos
+	# '[quit]' to the client to shut down the client as well. If it's not true, then it simply broadcasts the message
+	# to all the clients.
+	while True:
+		msg = client.recv(BUFSIZ)
+
+		if msg != "[quit]".encode('utf-8'):
+			broadcast(msg, f"{name}: ".encode('utf-8'))
+		
+		else:
+			client.send("[quit]".encode('utf-8'))
+			client.close()
+
+			del clients[client]
+
+			broadcast(f"{name} has left the chat.".encode('utf-8'))
+
+			break
+
+# Function used to easily send a data packet to all the clients connected on the server.
+# Note: Optional argument 'prefix' which is used to let the other users know who sent the message. If none
+# is provided, it will simply send the message with no prefix, letting the users know this is a system message.
+def broadcast(msg, prefix=" ".encode('utf-8')):
+	for client in clients:
+		client.send(prefix + msg)
+
+
+
+if __name__ == "__main__":
 	sv.listen(5)
 
-	threading._start_new_thread(accept_clients, (sv, " "))
+	print(f"Listening on {SV_HOST}:{SV_PORT}")
 
-	hostLbl['text'] = f"Host: {HOST_ADDR}"
-	portLbl['text'] = f"Port: {HOST_PORT}"
+	accept_thread = Thread(target=accept_connections)
+	accept_thread.start()
+	accept_thread.join()
 
-
-def stop_server():
-	startBtn.config(state=tk.NORMAL)
-	stopBtn.config(state=tk.DISABLED)
-
-
-
-# Accept new connections
-def accept_clients(server, y):
-	while True:
-		client, addr = server.accept()
-		clients.append(client)
-
-		threading._start_new_thread(send_and_recv_client_msg, (client, addr))
-
-# Function that receives messages from clients then
-# broadcasts them to the other clients.
-def send_and_recv_client_msg(client_conn, client_ip_addr):
-	global sv, nick, clients
-
-	client_msg = ' '
-
-	# Welcome message
-	nick = client_conn.recv(BUFSIZE)
-	client_conn.send(f"Welcome {nick}! You can use 'exit' to quit the chatroom.".encode())
-
-	nicks.append(nick)
-
-	# Update the list of users connected
-	update_client_list(nicks)
-
-	# Start a while loop in which you send and receive messages until a client wants to
-	# exit the chatroom.
-	while True:
-		data = client_conn.recv(BUFSIZE)
-
-		if not data: break
-		if data == 'exit': break
-
-		client_msg = data
-
-		idx = get_client_index(clients, client_conn)
-
-		queued_nick = nicks[idx]
-
-		for c in clients:
-			if c != client_conn:
-				c.send(f"{queued_nick}: {client_msg}")
-		
-
-	idx = get_client_index(clients, client_conn)
-
-	# Delete the client's name and IP from the 2 lists.
-	del nicks[idx]
-	del clients[idx]
-
-	# Close the client connection
-	client_conn.close()
-
-	# Update the list of users connected
-	update_client_list(nicks)
-
-
-# Helper function to help get the index of the current client more easily.
-def get_client_index(client_list, curr_client):
-	idx = 0
-
-	for conn in client_list:
-		if conn == curr_client:
-			break
-		idx += 1
-
-	return idx
-
-def update_client_list(nick_list):
-	listDisp.config(state=tk.NORMAL)
-	listDisp.delete('1.0', tk.END)
-
-	for c in nick_list:
-		listDisp.insert(tk.END, f"{c}\n")
-	listDisp.config(state=tk.DISABLED)
-
-
-# Main loop so the window doesn't disappear.
-win.mainloop()
+	sv.close()
